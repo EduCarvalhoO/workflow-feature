@@ -1,0 +1,45 @@
+# Assina o hash do conteudo do pacote com Sigstore (keyless) quando uma tag v* e criada.
+# ADR-0035 e runbook de assinatura do ez-ai. Actions fixadas por SHA de commit.
+name: release-assinada
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  assinar:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # commitar o bundle e mover a tag para esse commit
+      id-token: write   # token OIDC: vira o certificado Sigstore
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Obter o ez-ai em commit fixo (ainda nao esta no npm)
+        run: |
+          git clone https://github.com/EduCarvalhoO/ez-ai.git "$RUNNER_TEMP/ez-ai"
+          git -C "$RUNNER_TEMP/ez-ai" checkout 2362f40e1bb670461b6c53bfe61e1e062b37d0e9
+          cd "$RUNNER_TEMP/ez-ai"
+          npm ci --ignore-scripts
+          npm run build
+      - name: Calcular o hash do conteudo do pacote
+        run: |
+          # A arvore do commit da tag, sem .git: e o que quem instala le.
+          mkdir "$RUNNER_TEMP/pacote" && git archive HEAD | tar -x -C "$RUNNER_TEMP/pacote"
+          printf '%s' "$(node "$RUNNER_TEMP/ez-ai/dist/cli/index.js" hash-pacote "$RUNNER_TEMP/pacote")" > hash.txt
+          cat hash.txt
+      - name: Assinar o hash (keyless)
+        run: cosign sign-blob --yes --bundle harness-pacote.sigstore.json hash.txt
+      - name: Publicar o bundle no commit da tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add harness-pacote.sigstore.json
+          git commit -m "chore: bundle de assinatura de ${GITHUB_REF_NAME}"
+          git tag -f "${GITHUB_REF_NAME}"
+          git push --force origin "refs/tags/${GITHUB_REF_NAME}"
