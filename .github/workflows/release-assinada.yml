@@ -29,10 +29,15 @@ jobs:
           npm run build
       - name: Calcular o hash do conteudo do pacote
         run: |
-          # A arvore do commit da tag, sem .git: e o que quem instala le.
+          set -euo pipefail
+          # A arvore do commit da tag, sem .git: e o que quem instala le. hash-pacote exige caminho relativo.
+          RAIZ="$PWD"
           mkdir "$RUNNER_TEMP/pacote" && git archive HEAD | tar -x -C "$RUNNER_TEMP/pacote"
-          printf '%s' "$(node "$RUNNER_TEMP/ez-ai/dist/cli/index.js" hash-pacote "$RUNNER_TEMP/pacote")" > hash.txt
-          cat hash.txt
+          cd "$RUNNER_TEMP"
+          HASH="$(node ez-ai/dist/cli/index.js hash-pacote pacote)"
+          case "$HASH" in sha256:*) ;; *) echo "hash invalido: '$HASH'"; exit 1 ;; esac
+          printf '%s' "$HASH" > "$RAIZ/hash.txt"
+          cat "$RAIZ/hash.txt"
       - name: Assinar o hash (keyless)
         run: cosign sign-blob --yes --bundle harness-pacote.sigstore.json hash.txt
       - name: Publicar o bundle no commit da tag
